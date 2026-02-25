@@ -3,7 +3,7 @@ import { Play, Square, RotateCcw, VolumeX, Volume2, FileText } from "lucide-reac
 import { Button } from "@/components/ui/button";
 
 export default function ControlBar() {
-  const { isStreaming, isLoading, isMuted, startSession, endSession, resetSession, toggleMute } =
+  const { isStreaming, isLoading, isMuted, selectedFile, startSession, endSession, resetSession, toggleMute } =
     useVisionAgent();
 
   return (
@@ -15,7 +15,7 @@ export default function ControlBar() {
           className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Play className="h-4 w-4" />
-          {isLoading ? "Connecting…" : "Start Session"}
+          {isLoading ? "Connecting…" : selectedFile ? "Analyze File" : "Start Live Session"}
         </Button>
       ) : (
         <>
@@ -43,7 +43,7 @@ export default function ControlBar() {
             className="gap-1.5 bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             <Square className="h-3.5 w-3.5" />
-            End & Summarize
+            Stop Session
           </Button>
         </>
       )}

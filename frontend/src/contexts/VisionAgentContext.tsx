@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
+import { useCoachTelemetry } from "../hooks/useCoachTelemetry";
+import { StreamVideoClient, StreamVideo, Call, StreamCall } from "@stream-io/video-react-sdk";
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 
 export interface PoseKeypoint {
   name: string;
@@ -33,6 +36,7 @@ interface VisionAgentState {
   isSyncing: boolean;
   isLoading: boolean;
   isMuted: boolean;
+  isConnected: boolean;
   score: number;
   activeTaskId: string | null;
   tasks: TaskSkill[];
@@ -40,6 +44,8 @@ interface VisionAgentState {
   keypoints: PoseKeypoint[];
   coachingCues: CoachingCue[];
   transcript: string[];
+  selectedFile: File | null;
+  streamCall: Call | null;
 }
 
 interface VisionAgentActions {
@@ -48,6 +54,7 @@ interface VisionAgentActions {
   resetSession: () => void;
   toggleMute: () => void;
   selectTask: (taskId: string) => void;
+  setSelectedFile: (file: File | null) => void;
 }
 
 type VisionAgentContextType = VisionAgentState & VisionAgentActions;
@@ -133,6 +140,7 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
     isSyncing: false,
     isLoading: false,
     isMuted: false,
+    isConnected: false,
     score: 0,
     activeTaskId: null,
     tasks: MOCK_TASKS,
@@ -146,11 +154,93 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
     keypoints: [],
     coachingCues: [],
     transcript: [],
+    selectedFile: null,
+    streamCall: null,
   });
+
+  const [streamClient, setStreamClient] = useState<StreamVideoClient | null>(null);
 
   const intervalRef = useRef<number | null>(null);
 
+  // Real-time Telemetry Hook
+  const { isConnected, latestPayload } = useCoachTelemetry();
+
+  // Helper to map telemetry data safely to the metrics array format
+  const updateMetricsFromTelemetry = useCallback((data: any) => {
+    setState((prev) => {
+      const newMetrics = [...prev.metrics];
+
+      // Safe access functions for nested (main.py) or flat (test_connection.py) payloads
+      const armAngle = data.smash?.arm_angle ?? data.arm_angle;
+      const kneeFlexion = data.stance?.avg_knee_flexion ?? data.avg_knee_flexion;
+      const isSmash = data.smash?.is_smash ?? data.is_smash;
+      const isStance = data.stance?.is_ready_stance;
+      const feedback = data.feedback;
+
+      // Map Arm Angle
+      if (armAngle !== undefined) {
+        const angleIdx = newMetrics.findIndex(m => m.label === "Elbow Angle");
+        if (angleIdx >= 0) {
+          newMetrics[angleIdx] = { ...newMetrics[angleIdx], value: String(Math.floor(armAngle)) };
+        }
+      }
+
+      // Map Knee Flexion
+      if (kneeFlexion !== undefined) {
+        const kneeIdx = newMetrics.findIndex(m => m.label === "Knee Flexion");
+        if (kneeIdx >= 0) {
+          newMetrics[kneeIdx] = { ...newMetrics[kneeIdx], value: String(Math.floor(kneeFlexion)) };
+        }
+      }
+
+      // Populate Transcripts/Cues
+      let newTranscript = prev.transcript;
+      let newCues = prev.coachingCues;
+
+      if (isSmash) {
+        const customMsg = feedback || "Great overhead extension!";
+        const fullMsg = `[${new Date().toLocaleTimeString()}] ${customMsg} Arm angle at ${Math.floor(armAngle)}°.`;
+        if (!prev.transcript[prev.transcript.length - 1]?.includes(customMsg)) {
+          newTranscript = [...newTranscript.slice(-19), fullMsg];
+          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: customMsg, timestamp: Date.now() }];
+        }
+      } else if (feedback) {
+        // Handles generic flat feedback sent individually from the mock
+        const fullMsg = `[${new Date().toLocaleTimeString()}] [Coach]: ${feedback}`;
+        if (!prev.transcript[prev.transcript.length - 1]?.includes(feedback)) {
+          newTranscript = [...newTranscript.slice(-19), fullMsg];
+          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: feedback, timestamp: Date.now() }];
+        }
+      }
+
+      if (isStance) {
+        const fullMsg = `[${new Date().toLocaleTimeString()}] Excellent foundation. Knees bent at ${Math.floor(kneeFlexion)}°.`;
+        if (!prev.transcript[prev.transcript.length - 1]?.includes("Excellent foundation.")) {
+          newTranscript = [...newTranscript.slice(-19), fullMsg];
+          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: "Excellent foundation.", timestamp: Date.now() }];
+        }
+      }
+
+      return {
+        ...prev,
+        metrics: newMetrics,
+        transcript: newTranscript,
+        coachingCues: newCues
+      };
+    });
+  }, []);
+
+  // Sync WebSocket payload updates with context state when streaming
+  useEffect(() => {
+    if (state.isStreaming && isConnected && latestPayload) {
+      updateMetricsFromTelemetry(latestPayload);
+    }
+  }, [latestPayload, isConnected, state.isStreaming, updateMetricsFromTelemetry]);
+
   const simulateData = useCallback(() => {
+    // Only mock if WebSocket is NOT delivering a connection
+    if (isConnected) return;
+
     setState((prev) => {
       const newMetrics = prev.metrics.map((m) => ({
         ...m,
@@ -167,21 +257,21 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
       const shouldAddCue = Math.random() > 0.7;
       const newCues = shouldAddCue
         ? [
-            ...prev.coachingCues.slice(-4),
-            {
-              id: Date.now().toString(),
-              message: COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)],
-              timestamp: Date.now(),
-            },
-          ]
+          ...prev.coachingCues.slice(-4),
+          {
+            id: Date.now().toString(),
+            message: COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)],
+            timestamp: Date.now(),
+          },
+        ]
         : prev.coachingCues;
 
       const shouldAddTranscript = Math.random() > 0.8;
       const newTranscript = shouldAddTranscript
         ? [
-            ...prev.transcript.slice(-19),
-            `[${new Date().toLocaleTimeString()}] ${COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)]}`,
-          ]
+          ...prev.transcript.slice(-19),
+          `[${new Date().toLocaleTimeString()}] ${COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)]}`,
+        ]
         : prev.transcript;
 
       return {
@@ -194,20 +284,66 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         isSyncing: Math.random() > 0.9,
       };
     });
-  }, []);
+  }, [isConnected]);
 
-  const startSession = useCallback(() => {
+  const startSession = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true, isStreaming: false }));
-    setTimeout(() => {
+    try {
+      let callToUse = state.streamCall;
+
+      if (!streamClient) {
+        // Fetch Stream API Token generated for the badminton player
+        const tokenRes = await fetch("http://127.0.0.1:8000/get-token");
+        const { token } = await tokenRes.json();
+
+        const client = new StreamVideoClient({
+          apiKey: "snqahz79zupf", // Provided from server's Stream credentials
+          user: { id: "user_badminton_player" },
+          token,
+        });
+        setStreamClient(client);
+
+        const call = client.call("default", "default_stream_call");
+        await call.join({ create: true });
+        callToUse = call;
+      }
+
+      setState((prev) => ({ ...prev, streamCall: callToUse! }));
+
+      // We no longer send files via POST /analyze-file. 
+      // MediaLayer will instead capture the HTML video and publish it via streamCall.
+      if (!state.selectedFile) {
+        await callToUse?.camera.enable();
+      }
+
+      // Tell the backend Agent hardware to join the WebRTC call
+      await fetch("http://127.0.0.1:8000/start-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ call_id: "default_stream_call" }),
+      });
+
+      // Activate streaming UI modes; websocket data will flow automatically if connected
       setState((prev) => ({ ...prev, isLoading: false, isStreaming: true, isSyncing: false }));
-      intervalRef.current = window.setInterval(simulateData, 800);
-    }, 500);
-  }, [simulateData]);
+
+      // Fallback: If not connected to WS backend, start simulating mock data so UI works without it
+      if (!isConnected) {
+        intervalRef.current = window.setInterval(simulateData, 800);
+      }
+    } catch (e) {
+      console.error("Failed to start backend session", e);
+      setState((prev) => ({ ...prev, isLoading: false, isStreaming: false, isSyncing: false }));
+    }
+  }, [simulateData, isConnected, state.selectedFile, streamClient, state.streamCall]);
 
   const endSession = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    setState((prev) => ({ ...prev, isStreaming: false, isSyncing: false, keypoints: [] }));
-  }, []);
+    if (state.streamCall) {
+      state.streamCall.camera.disable();
+      state.streamCall.microphone.disable();
+    }
+    setState((prev) => ({ ...prev, isStreaming: false, isSyncing: false, keypoints: [], selectedFile: null }));
+  }, [state.streamCall]);
 
   const resetSession = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -220,6 +356,8 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
       keypoints: [],
       coachingCues: [],
       transcript: [],
+      selectedFile: null,
+      streamCall: null,
       metrics: prev.metrics.map((m) => ({ ...m, value: "—", trend: undefined })),
       tasks: MOCK_TASKS,
       activeTaskId: null,
@@ -241,17 +379,36 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
     }));
   }, []);
 
+  const setSelectedFile = useCallback((file: File | null) => {
+    setState((prev) => ({ ...prev, selectedFile: file }));
+  }, []);
+
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (streamClient) {
+        streamClient.disconnectUser();
+      }
     };
-  }, []);
+  }, [streamClient]);
 
   return (
     <VisionAgentContext.Provider
-      value={{ ...state, startSession, endSession, resetSession, toggleMute, selectTask }}
+      value={{ ...state, isConnected, startSession, endSession, resetSession, toggleMute, selectTask, setSelectedFile }}
     >
-      {children}
+      {streamClient ? (
+        <StreamVideo client={streamClient}>
+          {state.streamCall ? (
+            <StreamCall call={state.streamCall}>
+              {children}
+            </StreamCall>
+          ) : (
+            children
+          )}
+        </StreamVideo>
+      ) : (
+        children
+      )}
     </VisionAgentContext.Provider>
   );
 }

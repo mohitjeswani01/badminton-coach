@@ -214,6 +214,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "uvicorn" },
     { name = "vision-agents", extra = ["gemini", "getstream", "ultralytics"] },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -222,6 +223,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "uvicorn", specifier = ">=0.41.0" },
     { name = "vision-agents", extras = ["gemini", "getstream", "ultralytics"], specifier = ">=0.3.7" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [[package]]
