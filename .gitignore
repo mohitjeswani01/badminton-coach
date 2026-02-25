@@ -1,0 +1,29 @@
+# --- Python / FastAPI ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.pytest_cache/
+*.db
+
+# --- Frontend / React ---
+node_modules/
+dist/
+build/
+.npm
+*.log
+.eslintcache
+
+# --- IDE & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Project Specific ---
+backend/.env
+frontend/.env
+*.mp4
