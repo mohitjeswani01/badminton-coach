@@ -11,3 +11,5 @@ numpy>=1.26.0
 # Utils
 python-dotenv>=1.0.1
 pydantic>=2.9.0
+# WebSockets Client
+websockets>=12.0

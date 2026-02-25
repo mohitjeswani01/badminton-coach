@@ -57,37 +57,26 @@ export default function VideoFeed() {
   const latestCue = coachingCues[coachingCues.length - 1];
 
   return (
-    <div className="video-container w-full">
-      {/* Dark background simulating camera feed */}
-      <div className="absolute inset-0 bg-gradient-to-br from-secondary/30 to-background" />
-
+    <div className="pointer-events-none absolute inset-0 z-20 h-full w-full">
       {/* Canvas overlay */}
       <canvas
         ref={canvasRef}
         width={960}
         height={540}
-        className="absolute inset-0 h-full w-full"
+        className="absolute inset-0 h-full w-full object-contain"
       />
 
-      {/* Loading state */}
+      {/* Loading state overlay inside canvas box */}
       {isLoading && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm font-medium text-muted-foreground">Connecting camera…</p>
-        </div>
-      )}
-
-      {/* Idle state */}
-      {!isStreaming && !isLoading && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3">
-          <Video className="h-12 w-12 text-muted-foreground/40" />
-          <p className="text-sm text-muted-foreground">Start a session to begin</p>
+          <p className="text-sm font-medium text-muted-foreground">Connecting Vision Edge...</p>
         </div>
       )}
 
       {/* Score badge */}
       {isStreaming && (
-        <div className="absolute right-3 top-3 z-20 flex items-center gap-2 rounded-lg border border-primary/30 bg-card/80 px-3 py-1.5 backdrop-blur-md">
+        <div className="absolute right-3 top-3 flex items-center gap-2 rounded-lg border border-primary/30 bg-card/80 px-3 py-1.5 backdrop-blur-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Score</span>
           <span className="metric-value text-base">{score}</span>
         </div>
@@ -95,19 +84,19 @@ export default function VideoFeed() {
 
       {/* Syncing indicator */}
       {isSyncing && isStreaming && (
-        <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full border border-warning/30 bg-card/80 px-2.5 py-1 backdrop-blur-md">
+        <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full border border-warning/30 bg-card/80 px-2.5 py-1 backdrop-blur-md">
           <WifiOff className="h-3 w-3 text-warning" />
           <span className="text-[10px] font-medium text-warning">Syncing</span>
         </div>
       )}
 
-      {/* Coaching toast */}
+      {/* Coaching cue */}
       {latestCue && isStreaming && (
-        <div className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
-          <div className="toast-coaching flex items-center gap-2 shadow-lg">
-            <span className="pulse-dot status-active" />
-            {latestCue.message}
+        <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-primary/20 bg-card/90 px-6 py-3 shadow-2xl backdrop-blur-xl">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary">
+            <span className="font-bold">AI</span>
           </div>
+          <p className="font-medium text-foreground">{latestCue.message}</p>
         </div>
       )}
     </div>
