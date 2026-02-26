@@ -104,7 +104,7 @@ export default function MediaLayer() {
     if (isStreaming || isLoading) {
         if (!streamCall) {
             return (
-                <div className="flex h-full min-h-[400px] w-full items-center justify-center bg-black rounded-xl animate-pulse">
+                <div className="flex h-full w-full items-center justify-center bg-black rounded-xl animate-pulse">
                     <p className="text-muted-foreground font-medium tracking-wide">Initializing Vision Agent...</p>
                 </div>
             );
@@ -112,14 +112,14 @@ export default function MediaLayer() {
 
         if (selectedFile) {
             return (
-                <div className="relative flex h-full min-h-[400px] w-full overflow-hidden bg-black rounded-xl">
+                <div className="relative flex h-full max-h-full w-full overflow-hidden bg-black rounded-xl">
                     <FileStreamPublisher file={selectedFile} />
                     <VideoFeed />
                 </div>
             );
         } else {
             return (
-                <div className="relative flex h-full min-h-[400px] w-full overflow-hidden bg-black rounded-xl">
+                <div className="relative flex h-full max-h-full w-full overflow-hidden bg-black rounded-xl">
                     <LiveCameraView />
                     <VideoFeed />
                 </div>
@@ -128,7 +128,7 @@ export default function MediaLayer() {
     }
 
     return (
-        <div className="relative flex h-full min-h-[400px] w-full flex-col items-center justify-center overflow-hidden rounded-xl border border-border bg-card/40">
+        <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-xl border border-border bg-card/40">
             {!selectedFile ? (
                 <div
                     onDragOver={handleDragOver}

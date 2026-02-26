@@ -46,6 +46,8 @@ interface VisionAgentState {
   transcript: string[];
   selectedFile: File | null;
   streamCall: Call | null;
+  sessionHistory: string[];
+  isFormGood: boolean | null;
 }
 
 interface VisionAgentActions {
@@ -154,8 +156,10 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
     keypoints: [],
     coachingCues: [],
     transcript: [],
+    sessionHistory: [],
     selectedFile: null,
     streamCall: null,
+    isFormGood: null,
   });
 
   const [streamClient, setStreamClient] = useState<StreamVideoClient | null>(null);
@@ -193,31 +197,33 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         }
       }
 
-      // Populate Transcripts/Cues
-      let newTranscript = prev.transcript;
-      let newCues = prev.coachingCues;
+      const activeTaskId = prev.activeTaskId || "ready-stance";
+      let formGood = prev.isFormGood;
 
-      if (isSmash) {
-        const customMsg = feedback || "Great overhead extension!";
-        const fullMsg = `[${new Date().toLocaleTimeString()}] ${customMsg} Arm angle at ${Math.floor(armAngle)}°.`;
-        if (!prev.transcript[prev.transcript.length - 1]?.includes(customMsg)) {
-          newTranscript = [...newTranscript.slice(-19), fullMsg];
-          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: customMsg, timestamp: Date.now() }];
-        }
-      } else if (feedback) {
-        // Handles generic flat feedback sent individually from the mock
-        const fullMsg = `[${new Date().toLocaleTimeString()}] [Coach]: ${feedback}`;
-        if (!prev.transcript[prev.transcript.length - 1]?.includes(feedback)) {
-          newTranscript = [...newTranscript.slice(-19), fullMsg];
-          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: feedback, timestamp: Date.now() }];
-        }
+      if (activeTaskId === "smash" && isSmash !== undefined) {
+        formGood = isSmash;
+      } else if (activeTaskId === "ready-stance" && isStance !== undefined) {
+        formGood = isStance;
       }
 
-      if (isStance) {
-        const fullMsg = `[${new Date().toLocaleTimeString()}] Excellent foundation. Knees bent at ${Math.floor(kneeFlexion)}°.`;
-        if (!prev.transcript[prev.transcript.length - 1]?.includes("Excellent foundation.")) {
+      // Populate Transcripts/Cues/History
+      let newTranscript = prev.transcript;
+      let newCues = prev.coachingCues;
+      let newHistory = prev.sessionHistory;
+      const drillName = prev.tasks.find(t => t.id === prev.activeTaskId)?.title || "Drill";
+
+      if (feedback) {
+        let fullMsg = `[${drillName}]: ${feedback}`;
+        if (activeTaskId === "smash" && armAngle !== undefined) {
+          fullMsg += ` Arm angle at ${Math.floor(armAngle)}°.`;
+        } else if (activeTaskId === "ready-stance" && kneeFlexion !== undefined) {
+          fullMsg += ` Knees bent at ${Math.floor(kneeFlexion)}°.`;
+        }
+
+        if (!prev.transcript[prev.transcript.length - 1]?.includes(feedback)) {
           newTranscript = [...newTranscript.slice(-19), fullMsg];
-          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: "Excellent foundation.", timestamp: Date.now() }];
+          newHistory = [...newHistory, fullMsg];
+          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: feedback, timestamp: Date.now() }];
         }
       }
 
@@ -225,7 +231,9 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         ...prev,
         metrics: newMetrics,
         transcript: newTranscript,
-        coachingCues: newCues
+        coachingCues: newCues,
+        sessionHistory: newHistory,
+        isFormGood: formGood
       };
     });
   }, []);
@@ -267,12 +275,15 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         : prev.coachingCues;
 
       const shouldAddTranscript = Math.random() > 0.8;
+      const fakeMsg = COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)];
       const newTranscript = shouldAddTranscript
         ? [
           ...prev.transcript.slice(-19),
-          `[${new Date().toLocaleTimeString()}] ${COACHING_MESSAGES[Math.floor(Math.random() * COACHING_MESSAGES.length)]}`,
+          `[Mock Drill]: ${fakeMsg}`,
         ]
         : prev.transcript;
+
+      const newHistory = shouldAddTranscript ? [...prev.sessionHistory, `[Mock Drill]: ${fakeMsg}`] : prev.sessionHistory;
 
       return {
         ...prev,
@@ -280,6 +291,7 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         keypoints: jitteredKeypoints,
         coachingCues: newCues,
         transcript: newTranscript,
+        sessionHistory: newHistory,
         score: Math.min(100, prev.score + Math.floor(Math.random() * 3)),
         isSyncing: Math.random() > 0.9,
       };
@@ -297,7 +309,7 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         const { token } = await tokenRes.json();
 
         const client = new StreamVideoClient({
-          apiKey: "snqahz79zupf", // Provided from server's Stream credentials
+          apiKey: import.meta.env.VITE_STREAM_API_KEY || "5m24gbq85m6v",
           user: { id: "user_badminton_player" },
           token,
         });
@@ -320,7 +332,10 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
       await fetch("http://127.0.0.1:8000/start-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ call_id: "default_stream_call" }),
+        body: JSON.stringify({
+          call_id: "default_stream_call",
+          drill: state.activeTaskId || "ready-stance"
+        }),
       });
 
       // Activate streaming UI modes; websocket data will flow automatically if connected
@@ -356,8 +371,10 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
       keypoints: [],
       coachingCues: [],
       transcript: [],
+      sessionHistory: [],
       selectedFile: null,
       streamCall: null,
+      isFormGood: null,
       metrics: prev.metrics.map((m) => ({ ...m, value: "—", trend: undefined })),
       tasks: MOCK_TASKS,
       activeTaskId: null,
