@@ -13,6 +13,7 @@ load_dotenv()
 STREAM_API_KEY = os.getenv("STREAM_API_KEY")
 STREAM_API_SECRET = os.getenv("STREAM_API_SECRET")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 if not all([STREAM_API_KEY, STREAM_API_SECRET, GOOGLE_API_KEY]):
     raise RuntimeError("Missing required environment variables. Ensure STREAM_API_KEY, STREAM_API_SECRET, and GOOGLE_API_KEY are set.")
@@ -22,8 +23,11 @@ from vision_agents.core import Agent, User
 from vision_agents.plugins.getstream import Edge
 from vision_agents.plugins.gemini import VLM
 from vision_agents.plugins.ultralytics import YOLOPoseProcessor
+from vision_agents.plugins.elevenlabs import TTS
 
 from physics_engine import analyze_smash, analyze_ready_stance
+from audio_engine import Pyttsx3TTS, ResilientTTS
+import time
 
 app = FastAPI()
 
@@ -40,6 +44,11 @@ async def root():
     return {"status": "ok", "message": "AI Badminton Coach API Server Running"}
 
 telemetry_queue = asyncio.Queue()
+
+global_agent = None
+active_drill = "ready-stance"
+last_tts_time = 0.0
+app_loop = None
 
 class ConnectionManager:
     def __init__(self):
@@ -71,62 +80,99 @@ async def broadcast_telemetry_task():
 
 @app.on_event("startup")
 async def startup_event():
+    global app_loop
+    app_loop = asyncio.get_running_loop()
     asyncio.create_task(broadcast_telemetry_task())
 
 class SessionRequest(BaseModel):
     call_id: str
+    drill: str = "ready-stance"
 
 def pose_processor_callback(frame_data):
     """
     Sub-30ms execution path.
     Extract keypoints, run physics engine, embed payload into queue.
     """
+    global last_tts_time, active_drill, global_agent, app_loop
     try:
-        # Check standard layout: frame_data with keypoints
-        if hasattr(frame_data, 'keypoints') and frame_data.keypoints is not None:
-            # Check if there are any detections in the tensor
-            if len(frame_data.keypoints) > 0:
-                # Try handling direct ultralytics Results object vs SDK FrameData
-                kp = getattr(frame_data.keypoints, 'data', frame_data.keypoints)
-                if len(kp) > 0 and len(kp[0]) > 0:
-                    # Grab first person detected
-                    person_keypoints = kp[0]
+        # Check dictionary layout from monkey-patched YOLO pose processor
+        if isinstance(frame_data, dict) and "persons" in frame_data:
+            persons = frame_data["persons"]
+            if len(persons) > 0:
+                # Grab first person detected
+                person_keypoints = persons[0]["keypoints"]
+                
+                smash_data = analyze_smash(person_keypoints)
+                stance_data = analyze_ready_stance(person_keypoints)
                     
-                    smash_data = analyze_smash(person_keypoints)
-                    stance_data = analyze_ready_stance(person_keypoints)
-                    
-                    payload = {
-                        "type": "pose_telemetry",
-                        "smash": smash_data,
-                        "stance": stance_data
-                    }
-                    
-                    # Non-blocking enqueue
-                    try:
-                        telemetry_queue.put_nowait(payload)
-                    except asyncio.QueueFull:
-                        pass
+                # Logic Branching
+                trigger_tts = False
+                feedback_msg = ""
+                if active_drill == "smash" and smash_data["is_smash"]:
+                    trigger_tts = True
+                    feedback_msg = f"Focus on that extension! Elbow reached {smash_data['arm_angle']} degrees."
+                elif active_drill == "ready-stance" and stance_data["is_ready_stance"]:
+                    trigger_tts = True
+                    feedback_msg = f"Hold that stance! Great knee flexion at {stance_data['avg_knee_flexion']} degrees."
+
+                payload = {
+                    "type": "pose_telemetry",
+                    "smash": smash_data,
+                    "stance": stance_data
+                }
+                
+                current_time = time.time()
+                if trigger_tts and (current_time - last_tts_time > 10.0):
+                    last_tts_time = current_time
+                    payload["feedback"] = feedback_msg
+                    if global_agent and app_loop:
+                        asyncio.run_coroutine_threadsafe(global_agent.say(feedback_msg), app_loop)
+
+                # Non-blocking enqueue
+                try:
+                    telemetry_queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    pass
     except Exception as e:
         print(f"Pose processing err: {e}")
 
 @app.post("/start-session")
 async def start_session(request: SessionRequest):
+    global active_drill, global_agent
+    
     try:
+        active_drill = request.drill
         edge = Edge()
         vlm = VLM()
         user = User(id="user_badminton_coach")
         
+        primary_tts = TTS(api_key=ELEVENLABS_API_KEY)
+        fallback_tts = Pyttsx3TTS()
+        resilient_tts = ResilientTTS(primary=primary_tts, fallback=fallback_tts)
+        
         pose_processor = YOLOPoseProcessor(model_path="yolo11n-pose.pt")
         
-        if hasattr(pose_processor, 'set_callback'):
-            pose_processor.set_callback(pose_processor_callback)
+        # Monkey-patch add_pose_to_ndarray to intercept telemetry data, as the SDK drops it by default
+        original_add_pose = pose_processor.add_pose_to_ndarray
+        async def intercepted_add_pose(frame_array):
+            annotated_array, pose_data = await original_add_pose(frame_array)
+            if isinstance(pose_data, dict) and "persons" in pose_data:
+                try:
+                    pose_processor_callback(pose_data)
+                except Exception as e:
+                    print(f"Callback error: {e}")
+            return annotated_array, pose_data
+            
+        pose_processor.add_pose_to_ndarray = intercepted_add_pose
             
         agent = Agent(
             agent_user=user,
             llm=vlm,
             edge=edge,
+            tts=resilient_tts,
             processors=[pose_processor]
         )
+        global_agent = agent
         
         async def run_agent_task(agent_instance, c_id):
             try:
@@ -135,6 +181,7 @@ async def start_session(request: SessionRequest):
                 call = client.video.call("default", c_id)
                 await call.create(data={"created_by_id": "user_badminton_coach"})
                 async with agent_instance.join(call):
+                    await agent_instance.speak(f"Starting {request.drill} drill. Make sure you are in the frame.")
                     await agent_instance.finish()
             except Exception as e:
                 import traceback

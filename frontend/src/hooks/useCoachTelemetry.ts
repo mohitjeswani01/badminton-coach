@@ -45,14 +45,15 @@ export function useCoachTelemetry(url = "ws://127.0.0.1:8000/ws/telemetry") {
 
             ws.onmessage = (event) => {
                 const now = Date.now();
-                if (now - lastUpdateRef.current >= THROTTLE_MS) {
-                    try {
-                        const data: TelemetryPayload = JSON.parse(event.data);
+                try {
+                    const data: TelemetryPayload = JSON.parse(event.data);
+                    // Always process if it has feedback to avoid dropping TTS text, otherwise throttle
+                    if (data.feedback || now - lastUpdateRef.current >= THROTTLE_MS) {
                         setLatestPayload(data);
                         lastUpdateRef.current = now;
-                    } catch (e) {
-                        console.error("Failed to parse telemetry payload", e);
                     }
+                } catch (e) {
+                    console.error("Failed to parse telemetry payload", e);
                 }
             };
 

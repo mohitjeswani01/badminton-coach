@@ -71,9 +71,9 @@ const DashboardLayout = () => {
         </aside>
 
         {/* Center */}
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className="flex flex-1 items-center justify-center p-2 sm:p-4">
-            <div className="w-full max-w-4xl">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-1 items-center justify-center p-2 sm:p-4 overflow-y-auto">
+            <div className="w-full h-full max-w-4xl flex items-center justify-center">
               <MediaLayer />
             </div>
           </div>

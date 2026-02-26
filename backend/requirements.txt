@@ -1,15 +1,18 @@
 # Core Vision SDK & Sponsor Tech
-vision-agents[getstream,gemini,ultralytics]>=0.3.0
+vision-agents[getstream,gemini,ultralytics,elevenlabs]==0.3.7
 
 # Backend Framework
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 
 # Computer Vision & Math
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 
 # Utils
 python-dotenv>=1.0.1
 pydantic>=2.9.0
 # WebSockets Client
 websockets>=12.0
+
+# Audio Fallback
+pyttsx3
