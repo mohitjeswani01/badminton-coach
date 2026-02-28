@@ -1,8 +1,14 @@
 import asyncio
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import json
 import logging
 import os
 import torch
+import math
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -22,6 +28,7 @@ from vision_agents.core import Agent, User
 from vision_agents.plugins.getstream import Edge
 from vision_agents.plugins import gemini, ultralytics, elevenlabs
 import getstream
+
 
 try:
     if not os.path.exists("yolo11n-pose.pt") or os.path.getsize("yolo11n-pose.pt") < 1000000:
@@ -100,38 +107,111 @@ async def start_session(request: SessionRequest):
 
         coach_prompt += f"\n\nCURRENT DRILL: {request.drill}"
                 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Force CPU decoding to avoid hardware/CUDA acceleration bugs
+        device = "cpu"
         
+        # Note: OpenAI Realtime fallback was requested but is not supported by the 
+        # current version of the `vision_agents` SDK installed in this environment.
+        # Defaulting to Gemini Realtime at 5 FPS to reduce latency.
+        
+        print("[DEBUG] Using Gemini Realtime LLM (Default)")
+        active_llm = gemini.Realtime(fps=4)
+
         # Native SDK Construction matching golf_coach exactly
         agent = Agent(
             edge=Edge(),
             agent_user=User(name="AI Badminton Coach", id="badminton-coach"),
             instructions=coach_prompt,
-            llm=gemini.Realtime(fps=10), # Native audio-video duplex
+            llm=active_llm,
+            tts=elevenlabs.TTS(api_key=ELEVENLABS_API_KEY),
             processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt", device=device)]
         )
         
         # Native Telemetry Intercept for Frontend UI Syncing
-        from vision_agents.core.events import BaseEvent
+        from vision_agents.core.events import EventManager, BaseEvent
+        from vision_agents.core.edge.events import TrackAddedEvent, TrackRemovedEvent
+        from vision_agents.core.llm.events import RealtimeResponseEvent
+
         @agent.events.subscribe
-        async def on_agent_event(event: BaseEvent):
+        async def on_generic_event(event: BaseEvent):
+            # Print all events for deep debugging
+            event_type = getattr(event, "type", type(event).__name__)
+            print(f"[GLOBAL EVENT SNIFFER] Event captured: {event_type}")
+
+            if event_type in ["agent.say", "agent.speech"]:
+                print(f"[AUDIO DEBUG] Agent speaking: {getattr(event, 'text', '')}")
+
+            if hasattr(event, "frame"):
+                print("[FRAME DEBUG] FRAME RECEIVED")
+            
+            if hasattr(event, "keypoints"):
+                try: 
+                    print(f"[YOLO DEBUG] POSE DETECTED with {len(event.keypoints)} keypoints")
+                except TypeError:
+                    pass
+        
+        @agent.events.subscribe
+        async def on_track_added(event: TrackAddedEvent):
+            print(f"[EVENT DEBUG] Track Added: {event.track_type} | id: {event.track_id}")
+
+        @agent.events.subscribe
+        async def on_track_removed(event: TrackRemovedEvent):
+            print(f"[EVENT DEBUG] Track Removed: {event.track_type} | id: {event.track_id}")
+            
+        @agent.events.subscribe
+        async def on_agent_response(event: RealtimeResponseEvent):
             event_type = getattr(event, "type", "unknown")
             print(f"[EVENT DEBUG] {event_type}") # Sniffer
             
-            if event_type == "agent.say_started":
-                payload = {
-                    "type": "transcript",
-                    "text": getattr(event, "text", "Agent Speech Started...")
-                }
-                telemetry_queue.put_nowait(payload)
+            # Capture speech for Live Transcript
+            if event_type in ["agent.say", "agent.speech", "agent.say_done"]:
+                text = getattr(event, "text", "")
+                if text:
+                    payload = {
+                        "type": "transcript",
+                        "text": text
+                    }
+                    telemetry_queue.put_nowait(payload)
                 
             elif "pose_data" in event_type or "keypoints" in event_type or "yolo" in event_type.lower():
+                print("[FRAME DEBUG] frame received")
                 keypoints = getattr(event, "keypoints", [])
+                print("[YOLO DEBUG] Pose detected:", keypoints)
                 if keypoints:
                     payload = {
                         "type": "pose_telemetry",
                         "keypoints": keypoints
                     }
+                    
+                    # Compute Angles for Analytics Panel
+                    try:
+                        def get_kp(name):
+                            for kp in keypoints:
+                                if kp.get("name") == name: return kp
+                            return None
+
+                        def calc_angle(p1, p2, p3):
+                            if not (p1 and p2 and p3): return None
+                            angle = math.degrees(math.atan2(p3['y'] - p2['y'], p3['x'] - p2['x']) - 
+                                                 math.atan2(p1['y'] - p2['y'], p1['x'] - p2['x']))
+                            angle = abs(angle)
+                            return angle if angle <= 180 else 360 - angle
+
+                        # Right Arm Angle (Shoulder -> Elbow -> Wrist)
+                        r_sh, r_el, r_wr = get_kp("right_shoulder"), get_kp("right_elbow"), get_kp("right_wrist")
+                        arm_angle = calc_angle(r_sh, r_el, r_wr)
+                        if arm_angle:
+                            payload["arm_angle"] = arm_angle
+                            
+                        # Right Knee Flexion (Hip -> Knee -> Ankle)
+                        r_hp, r_kn, r_an = get_kp("right_hip"), get_kp("right_knee"), get_kp("right_ankle")
+                        knee_flexion = calc_angle(r_hp, r_kn, r_an)
+                        if knee_flexion:
+                            payload["avg_knee_flexion"] = knee_flexion
+                            
+                    except Exception as e:
+                        print(f"[MATH ERROR] Failed to calculate angles: {e}")
+
                     telemetry_queue.put_nowait(payload)
 
         async def run_agent_task(agent_instance: Agent, c_id: str):
@@ -147,10 +227,27 @@ async def start_session(request: SessionRequest):
                     print("--- [SUCCESS] Native Agent fully bound to WebRTC. Monitoring... ---")
                     await asyncio.sleep(2.0)
                     
+                    async def log_tracks():
+                        while True:
+                            try:
+                                parts = agent_instance.edge._connection.participants_state.get_participants()
+                                agent_has_tracks = False
+                                for p in parts:
+                                    print(f"--- [TRACK POLICE] User: {p.user_id} | Tracks: {p.published_tracks} ---")
+                                    if p.user_id == "badminton-coach" and p.published_tracks:
+                                        agent_has_tracks = True
+                                
+                                if not agent_has_tracks:
+                                    print("--- WARNING: Agent has no audio track ---")
+                            except Exception as e:
+                                print(f"--- [TRACK POLICE ERROR] {e} ---")
+                            await asyncio.sleep(2.0)
+                    asyncio.create_task(log_tracks())
+                    
                     try:
-                        print("--- [DEBUG] Calling agent.llm.simple_response() ---")
-                        await agent_instance.llm.simple_response(text=f"Say hi to Mohit! You are fully connected.")
-                        print("--- [DEBUG] simple_response() completely successfully ---")
+                        print("--- [DEBUG] Calling agent_instance.say() to force audio track creation ---")
+                        await agent_instance.say("Starting coaching session.")
+                        print("--- [DEBUG] agent.say() completed successfully ---")
                     except Exception as speech_err:
                         print(f"--- [SPEECH INVOCATION FATAL ERROR]: {speech_err} ---")
                         import traceback

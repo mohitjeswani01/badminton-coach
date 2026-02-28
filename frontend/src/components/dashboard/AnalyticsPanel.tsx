@@ -1,5 +1,5 @@
 import { useVisionAgent } from "@/contexts/VisionAgentContext";
-import { Activity, TrendingUp, TrendingDown, Minus, MessageSquare } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 const trendIcon = {
@@ -72,15 +72,14 @@ export default function AnalyticsPanel() {
       {/* Transcript */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center gap-2 px-4 py-2">
-          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Live Transcript
+
           </p>
         </div>
         <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 pb-3 scrollbar-thin">
           {!transcript?.length ? (
             <p className="text-xs italic text-muted-foreground/50">
-              AI coach feedback will appear here…
+
             </p>
           ) : (
             <div className="space-y-1">

@@ -334,6 +334,22 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         const testCallId = `badminton-session-${Math.random().toString(36).substring(2, 9)}`;
         const call = client.call("default", testCallId);
 
+        // Force H264 codec for the Python AI agent compatibility
+        // @ts-ignore
+        call.updatePublishOptions({
+          preferredCodec: 'h264',
+          dangerouslyForceCodec: 'h264',
+          maxSimulcastLayers: 1
+        });
+
+        // Lower video resolution to help the Python WebRTC stack
+        // @ts-ignore
+        call.camera.setDefaultConstraints({
+          width: 640,
+          height: 480,
+          frameRate: 10
+        });
+
         // Debugging Stream Call Events
         // @ts-ignore
         call.on("participant.joined", (e) => console.log("[Stream] Participant Joined:", e));
