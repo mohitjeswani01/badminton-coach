@@ -16,3 +16,6 @@ websockets>=12.0
 
 # Audio Fallback
 pyttsx3
+
+# Chat Endpoint (OpenAI)
+openai>=1.0.0

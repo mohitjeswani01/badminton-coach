@@ -9,6 +9,7 @@ import logging
 import os
 import torch
 import math
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,6 +21,34 @@ STREAM_API_KEY = os.getenv("STREAM_API_KEY")
 STREAM_API_SECRET = os.getenv("STREAM_API_SECRET")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+
+# ── Chat Providers (isolated from vision agents, safe to fail independently) ──
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Provider 1: OpenAI
+openai_client = None
+try:
+    from openai import AsyncOpenAI
+    if OPENAI_API_KEY:
+        openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        print("[CHAT] OpenAI client initialized successfully.")
+    else:
+        print("[CHAT] OPENAI_API_KEY not set – OpenAI chat unavailable.")
+except ImportError:
+    print("[CHAT] openai package not installed – OpenAI chat unavailable.")
+
+# Provider 2: Google Gemini (fallback via REST API – no extra package needed)
+gemini_available = bool(GOOGLE_API_KEY)
+if gemini_available:
+    print("[CHAT] Gemini fallback ready (via REST API).")
+else:
+    print("[CHAT] GOOGLE_API_KEY not set – Gemini fallback unavailable.")
+
+if openai_client or gemini_available:
+    print("[CHAT] Chat endpoint ready (providers: " +
+          ", ".join(filter(None, ["OpenAI" if openai_client else None, "Gemini" if gemini_available else None])) + ")")
+else:
+    print("[CHAT] WARNING: No chat providers available – /chat will return offline message.")
 
 if not all([STREAM_API_KEY, STREAM_API_SECRET, GOOGLE_API_KEY]):
     raise RuntimeError("Missing required environment variables. Ensure STREAM_API_KEY, STREAM_API_SECRET, and GOOGLE_API_KEY are set.")
@@ -278,6 +307,93 @@ async def get_token():
         return {"token": token}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── Isolated Chat Endpoint (OpenAI → Gemini fallback) ────────────────────────
+
+class ChatRequest(BaseModel):
+    user_message: str
+    session_context: Optional[dict] = None
+
+CHAT_SYSTEM_PROMPT = (
+    "You are a helpful Badminton Coach. The user just finished a drill. "
+    "Respond to their chat messages concisely (max 20 words). "
+    "Be encouraging but technical."
+)
+
+def _build_system_msg(session_context: dict | None) -> str:
+    system_msg = CHAT_SYSTEM_PROMPT
+    if session_context:
+        ctx_parts = []
+        if "drill" in session_context:
+            ctx_parts.append(f"Current drill: {session_context['drill']}")
+        if "arm_angle" in session_context:
+            ctx_parts.append(f"Arm angle: {session_context['arm_angle']}°")
+        if "knee_flexion" in session_context:
+            ctx_parts.append(f"Knee flexion: {session_context['knee_flexion']}°")
+        if ctx_parts:
+            system_msg += "\n\nSession context: " + ", ".join(ctx_parts)
+    return system_msg
+
+async def _try_openai(system_msg: str, user_message: str) -> str | None:
+    """Attempt OpenAI, return response text or None on failure."""
+    if not openai_client:
+        return None
+    try:
+        completion = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=60,
+            temperature=0.7,
+        )
+        return completion.choices[0].message.content or "I'm here to help!"
+    except Exception as e:
+        print(f"[CHAT] OpenAI failed ({e}), falling back to Gemini...")
+        return None
+
+async def _try_gemini(system_msg: str, user_message: str) -> str | None:
+    """Attempt Gemini via REST API, return response text or None on failure."""
+    if not gemini_available:
+        return None
+    try:
+        import httpx
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GOOGLE_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": f"{system_msg}\n\nUser: {user_message}\nCoach:"}]}],
+            "generationConfig": {"maxOutputTokens": 60, "temperature": 0.7}
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        print(f"[CHAT] Gemini also failed: {e}")
+        return None
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    """Standalone text chat – tries OpenAI first, falls back to Gemini."""
+    try:
+        system_msg = _build_system_msg(request.session_context)
+
+        # Try OpenAI first
+        ai_text = await _try_openai(system_msg, request.user_message)
+
+        # Fallback to Gemini if OpenAI failed
+        if ai_text is None:
+            ai_text = await _try_gemini(system_msg, request.user_message)
+
+        # Both providers failed
+        if ai_text is None:
+            return {"response": "Coach is temporarily offline. Please try again in a moment."}
+
+        return {"response": ai_text}
+    except Exception as e:
+        print(f"[CHAT ERROR] {e}")
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):

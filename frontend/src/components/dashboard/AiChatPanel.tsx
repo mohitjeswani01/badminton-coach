@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { MessageCircle, X, Send, Mic, MicOff, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useVisionAgent } from "@/contexts/VisionAgentContext";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -12,14 +11,7 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-const MOCK_AI_RESPONSES = [
-  "Great question! Based on your last drill, your elbow angle was averaging 138°. Try to keep it closer to 150° for a more powerful smash.",
-  "I noticed your footwork timing is slightly late. Focus on initiating the split step just before your opponent makes contact.",
-  "Your backhand serve has improved! The shuttle height is consistently below 1.15m now. Keep it up!",
-  "Try widening your stance by about 10cm. This will give you better balance during recovery.",
-  "Your wrist snap speed has increased by 12% this session. That's excellent progress!",
-  "I'd recommend focusing on your ready stance next. A lower center of gravity will improve your reaction time.",
-];
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
 export default function AiChatPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -37,7 +29,6 @@ export default function AiChatPanel() {
   const [isAiTyping, setIsAiTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { isStreaming } = useVisionAgent();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -51,7 +42,8 @@ export default function AiChatPanel() {
     }
   }, [isOpen]);
 
-  const sendMessage = (text: string) => {
+  // ── Send message to OpenAI via backend (fully standalone) ──────────────
+  const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
     const userMsg: ChatMessage = {
@@ -64,17 +56,41 @@ export default function AiChatPanel() {
     setInput("");
     setIsAiTyping(true);
 
-    // Mock AI response
-    setTimeout(() => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_message: text.trim(),
+          session_context: null,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+
+      const data = await res.json();
+
       const aiMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "ai",
-        content: MOCK_AI_RESPONSES[Math.floor(Math.random() * MOCK_AI_RESPONSES.length)],
+        content: data.response || "Sorry, I couldn't process that.",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMsg]);
+    } catch (err) {
+      console.error("[Chat] Failed to get AI response:", err);
+      const errorMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: "ai",
+        content: "Oops — couldn't reach the coach right now. Please try again.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
       setIsAiTyping(false);
-    }, 800 + Math.random() * 1200);
+    }
   };
 
   const toggleListening = () => {
