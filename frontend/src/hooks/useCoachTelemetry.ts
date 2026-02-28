@@ -19,10 +19,16 @@ export interface TelemetryPayload {
     avg_knee_flexion?: number;
     is_smash?: boolean;
     feedback?: string;
+    text?: string;
     timestamp?: number;
+
+    // Array of keypoint objects for pose rendering
+    keypoints?: { name: string, x: number, y: number, confidence: number }[];
 }
 
-export function useCoachTelemetry(url = "ws://127.0.0.1:8000/ws/telemetry") {
+const defaultWsUrl = `${(import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000").replace(/^http/, 'ws')}/ws/telemetry`;
+
+export function useCoachTelemetry(url = defaultWsUrl) {
     const [isConnected, setIsConnected] = useState(false);
     const [latestPayload, setLatestPayload] = useState<TelemetryPayload | null>(null);
 
@@ -47,8 +53,8 @@ export function useCoachTelemetry(url = "ws://127.0.0.1:8000/ws/telemetry") {
                 const now = Date.now();
                 try {
                     const data: TelemetryPayload = JSON.parse(event.data);
-                    // Always process if it has feedback to avoid dropping TTS text, otherwise throttle
-                    if (data.feedback || now - lastUpdateRef.current >= THROTTLE_MS) {
+                    // Always process if it has feedback or is a direct transcript to avoid dropping text, otherwise throttle
+                    if (data.feedback || data.type === "transcript" || data.type === "pose_telemetry" || now - lastUpdateRef.current >= THROTTLE_MS) {
                         setLatestPayload(data);
                         lastUpdateRef.current = now;
                     }

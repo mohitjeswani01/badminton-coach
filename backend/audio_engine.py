@@ -6,6 +6,26 @@ import time
 import logging
 import subprocess
 
+try:
+    import aioice.ice
+    
+    if hasattr(aioice.ice.Connection, 'send_stun'):
+        _orig_send_stun = aioice.ice.Connection.send_stun
+        async def _safe_send_stun(self, *args, **kwargs):
+            if getattr(self, "transport", None) is None: return
+            return await _orig_send_stun(self, *args, **kwargs)
+        aioice.ice.Connection.send_stun = _safe_send_stun
+
+    if hasattr(aioice.ice.Connection, 'sendto'):
+        _orig_sendto = aioice.ice.Connection.sendto
+        def _safe_sendto(self, *args, **kwargs):
+            if getattr(self, "transport", None) is None: return
+            return _orig_sendto(self, *args, **kwargs)
+        aioice.ice.Connection.sendto = _safe_sendto
+except Exception as e:
+    print(f"[AUDIO] Failed to apply aioice monkey path: {e}")
+    pass
+
 import pyttsx3
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core import tts
@@ -101,11 +121,22 @@ class ResilientTTS(tts.TTS):
     ):
         try:
             print("[AUDIO] Using ElevenLabs...")
-            return await self.primary.stream_audio(text, *args, **kwargs)
+            pcm = await self.primary.stream_audio(text, *args, **kwargs)
         except Exception as e:
             print(f"[AUDIO] ElevenLabs Failed ({e}).")
+            import traceback
+            traceback.print_exc()
             print("[AUDIO] Fallback: Using pyttsx3...")
-            return await self.fallback.stream_audio(text, *args, **kwargs)
+            pcm = await self.fallback.stream_audio(text, *args, **kwargs)
+            pcm.sample_rate = 16000
+            pcm.channels = 1
+            pcm.format = 's16'
+        
+        # Socket Resilience Check
+        if not getattr(self, "edge", None) and not kwargs.get("participant"):
+            pass # PcmData will simply return gracefully instead of crashing a NoneType transport
+            
+        return pcm
 
     async def stop_audio(self) -> None:
         await self.primary.stop_audio()
