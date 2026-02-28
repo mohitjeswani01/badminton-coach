@@ -27,3 +27,32 @@ Thumbs.db
 backend/.env
 frontend/.env
 *.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local env
+.env
+
+# Debug / test files
+test_*.py
+*_demo.py
+*.txt
+
+# --- Project Specific ---
+backend/.env
+frontend/.env
+*.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local env
+.env
+
+# Debug / test files
+test_*.py
+*_demo.py
+*.txt

@@ -6,8 +6,9 @@ import { useCallStateHooks, ParticipantView, useCall } from "@stream-io/video-re
 import VideoFeed from "./VideoFeed";
 
 function LiveCameraView() {
-    const { useLocalParticipant } = useCallStateHooks();
+    const { useLocalParticipant, useRemoteParticipants } = useCallStateHooks();
     const localParticipant = useLocalParticipant();
+    const remoteParticipants = useRemoteParticipants();
 
     if (!localParticipant) {
         return (
@@ -19,7 +20,21 @@ function LiveCameraView() {
 
     return (
         <div className="flex h-full min-h-[400px] w-full relative overflow-hidden bg-black rounded-xl items-center justify-center">
-            <ParticipantView participant={localParticipant} />
+            <ParticipantView participant={localParticipant} muteAudio={true} />
+        </div>
+    );
+}
+
+function RemoteAudioBridge() {
+    const { useRemoteParticipants } = useCallStateHooks();
+    const remoteParticipants = useRemoteParticipants();
+    return (
+        <div className="absolute top-0 left-0 w-0 h-0 opacity-0 pointer-events-none overflow-hidden" aria-hidden="true">
+            {remoteParticipants.map((p) => (
+                <div key={p.sessionId}>
+                    <ParticipantView participant={p} muteAudio={false} />
+                </div>
+            ))}
         </div>
     );
 }
@@ -115,6 +130,7 @@ export default function MediaLayer() {
                 <div className="relative flex h-full max-h-full w-full overflow-hidden bg-black rounded-xl">
                     <FileStreamPublisher file={selectedFile} />
                     <VideoFeed />
+                    <RemoteAudioBridge />
                 </div>
             );
         } else {
@@ -122,6 +138,7 @@ export default function MediaLayer() {
                 <div className="relative flex h-full max-h-full w-full overflow-hidden bg-black rounded-xl">
                     <LiveCameraView />
                     <VideoFeed />
+                    <RemoteAudioBridge />
                 </div>
             );
         }

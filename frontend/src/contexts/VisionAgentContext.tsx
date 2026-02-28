@@ -210,9 +210,21 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
       let newTranscript = prev.transcript;
       let newCues = prev.coachingCues;
       let newHistory = prev.sessionHistory;
-      const drillName = prev.tasks.find(t => t.id === prev.activeTaskId)?.title || "Drill";
+      let newKeypoints = prev.keypoints;
+      const drillName = prev.tasks?.find(t => t.id === prev.activeTaskId)?.title || "Drill";
 
-      if (feedback) {
+      if (data.type === "pose_telemetry" && data.keypoints) {
+        newKeypoints = data.keypoints;
+      }
+
+      if (data.type === "transcript" && data.text) {
+        const transMsg = `[Coach]: ${data.text}`;
+        if (!prev.transcript[prev.transcript.length - 1]?.includes(data.text)) {
+          newTranscript = [...newTranscript.slice(-19), transMsg];
+          newHistory = [...newHistory, transMsg];
+          newCues = [...newCues.slice(-4), { id: Date.now().toString(), message: data.text, timestamp: Date.now() }];
+        }
+      } else if (feedback) {
         let fullMsg = `[${drillName}]: ${feedback}`;
         if (activeTaskId === "smash" && armAngle !== undefined) {
           fullMsg += ` Arm angle at ${Math.floor(armAngle)}°.`;
@@ -233,6 +245,7 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
         transcript: newTranscript,
         coachingCues: newCues,
         sessionHistory: newHistory,
+        keypoints: newKeypoints,
         isFormGood: formGood
       };
     });
@@ -305,17 +318,30 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
 
       if (!streamClient) {
         // Fetch Stream API Token generated for the badminton player
-        const tokenRes = await fetch("http://127.0.0.1:8000/get-token");
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+        const tokenRes = await fetch(`${backendUrl}/get-token`);
         const { token } = await tokenRes.json();
 
         const client = new StreamVideoClient({
           apiKey: import.meta.env.VITE_STREAM_API_KEY || "5m24gbq85m6v",
           user: { id: "user_badminton_player" },
           token,
+          options: { timeout: 15000, logLevel: "debug" as any }
         });
         setStreamClient(client);
 
-        const call = client.call("default", "default_stream_call");
+        // Generate a fresh unique call ID to prevent re-joining deadlocked/full sessions
+        const testCallId = `badminton-session-${Math.random().toString(36).substring(2, 9)}`;
+        const call = client.call("default", testCallId);
+
+        // Debugging Stream Call Events
+        // @ts-ignore
+        call.on("participant.joined", (e) => console.log("[Stream] Participant Joined:", e));
+        // @ts-ignore
+        call.on("participant.updated", (e) => console.log("[Stream] Participant Updated (Track Published/Muted):", e));
+        // @ts-ignore
+        call.on("track.published", (e) => console.log("[Stream] Track explicitly published:", e));
+
         await call.join({ create: true });
         callToUse = call;
       }
@@ -324,19 +350,65 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
 
       // We no longer send files via POST /analyze-file. 
       // MediaLayer will instead capture the HTML video and publish it via streamCall.
-      if (!state.selectedFile) {
-        await callToUse?.camera.enable();
+      try {
+        if (!state.selectedFile) {
+          await callToUse?.camera.enable();
+        }
+        await callToUse?.microphone.enable();
+      } catch (err) {
+        console.warn("Media device enable warning:", err);
       }
 
-      // Tell the backend Agent hardware to join the WebRTC call
-      await fetch("http://127.0.0.1:8000/start-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          call_id: "default_stream_call",
-          drill: state.activeTaskId || "ready-stance"
-        }),
-      });
+      // Crucial: Wait for the local participant's video/audio track to actually publish to the SFU
+      let isPublishing = false;
+      for (let i = 0; i < 30; i++) {
+        const parts = callToUse?.state?.participants || [];
+        const localP = callToUse?.state?.localParticipant;
+        const HasLocalJoinedTheRoom = parts.some(p => p.userId === "user_badminton_player");
+
+        if (localP) {
+          console.log(`[Stream Setup] Try ${i + 1}/30 - LocalP State:`, {
+            joined: HasLocalJoinedTheRoom,
+            publishedTracks: localP.publishedTracks,
+            hasVideoTrack: !!(localP as any).videoTrack,
+          });
+        }
+
+        // Ensure both the peer connection identifies us in the room AND the video track is published to the SFU.
+        // Stream SDK tracks are sometimes string 'video', 'videoTrack', or enum 2. Also check if the raw videoTrack object exists.
+        const isVideoPublished =
+          localP?.publishedTracks?.includes('video' as any) ||
+          localP?.publishedTracks?.includes('videoTrack' as any) ||
+          localP?.publishedTracks?.includes(2 as any) ||
+          !!(localP as any)?.videoTrack;
+
+        if (HasLocalJoinedTheRoom && isVideoPublished) {
+          isPublishing = true;
+          console.log("FRONTEND: Video track successfully published and verified by SFU.");
+          break;
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      console.log(`FRONTEND: Media tracks published to session ${callToUse?.id}`);
+      console.log(`FRONTEND Session ID: ${callToUse?.state?.session?.id || (callToUse as any)?.sessionId || callToUse?.id}`);
+
+      // Tell the backend Agent hardware to join the WebRTC call ONLY after publishing is confirmed
+      if (isPublishing) {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+        console.log("Calling Backend at:", backendUrl);
+        await fetch(`${backendUrl}/start-session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            call_id: callToUse!.id,
+            drill: state.activeTaskId || "ready-stance",
+            ready: true
+          }),
+        });
+      } else {
+        console.warn("FRONTEND: Timed out waiting for video publication. Did not signal backend. Retrying might be needed.");
+      }
 
       // Activate streaming UI modes; websocket data will flow automatically if connected
       setState((prev) => ({ ...prev, isLoading: false, isStreaming: true, isSyncing: false }));
@@ -351,17 +423,31 @@ export function VisionAgentProvider({ children }: { children: React.ReactNode })
     }
   }, [simulateData, isConnected, state.selectedFile, streamClient, state.streamCall]);
 
-  const endSession = useCallback(() => {
+  const endSession = useCallback(async () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (state.streamCall) {
-      state.streamCall.camera.disable();
-      state.streamCall.microphone.disable();
+      try {
+        await state.streamCall.camera.disable();
+        await state.streamCall.microphone.disable();
+        await state.streamCall.leave();
+      } catch (err) {
+        console.warn("Error leaving call:", err);
+      }
     }
     setState((prev) => ({ ...prev, isStreaming: false, isSyncing: false, keypoints: [], selectedFile: null }));
   }, [state.streamCall]);
 
-  const resetSession = useCallback(() => {
+  const resetSession = useCallback(async () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
+    if (state.streamCall) {
+      try {
+        await state.streamCall.camera.disable();
+        await state.streamCall.microphone.disable();
+        await state.streamCall.leave();
+      } catch (err) {
+        console.warn("Error resetting call:", err);
+      }
+    }
     setState((prev) => ({
       ...prev,
       isStreaming: false,

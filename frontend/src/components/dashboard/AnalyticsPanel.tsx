@@ -9,10 +9,11 @@ const trendIcon = {
 };
 
 export default function AnalyticsPanel() {
-  const { metrics, transcript, activeTaskId, tasks } = useVisionAgent();
+  const { metrics = [], transcript = [], activeTaskId, tasks = [] } = useVisionAgent();
   const transcriptRef = useRef<HTMLDivElement>(null);
 
-  const activeTask = tasks.find((t) => t.id === activeTaskId);
+  const activeTask = tasks?.find((t) => t?.id === activeTaskId);
+
 
   useEffect(() => {
     if (transcriptRef.current) {
@@ -37,7 +38,7 @@ export default function AnalyticsPanel() {
             Target — {activeTask.title}
           </p>
           <div className="space-y-1.5">
-            {activeTask.targetMetrics.map((tm) => (
+            {activeTask.targetMetrics?.map((tm) => (
               <div key={tm.label} className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">{tm.label}</span>
                 <span className="font-mono font-medium text-foreground">{tm.target}</span>
@@ -53,7 +54,7 @@ export default function AnalyticsPanel() {
           Key Metrics
         </p>
         <div className="space-y-2">
-          {metrics.map((m) => (
+          {metrics?.map((m) => (
             <div key={m.label} className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">{m.label}</span>
               <div className="flex items-center gap-1.5">
@@ -77,13 +78,13 @@ export default function AnalyticsPanel() {
           </p>
         </div>
         <div ref={transcriptRef} className="flex-1 overflow-y-auto px-4 pb-3 scrollbar-thin">
-          {transcript.length === 0 ? (
+          {!transcript?.length ? (
             <p className="text-xs italic text-muted-foreground/50">
               AI coach feedback will appear here…
             </p>
           ) : (
             <div className="space-y-1">
-              {transcript.map((line, i) => (
+              {transcript?.map((line, i) => (
                 <p key={i} className="font-mono text-[11px] leading-relaxed text-secondary-foreground/80">
                   {line}
                 </p>

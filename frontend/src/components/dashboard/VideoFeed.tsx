@@ -13,9 +13,9 @@ const SKELETON_CONNECTIONS = [
 ];
 
 export default function VideoFeed() {
-  const { isStreaming, isLoading, isSyncing, score, keypoints, coachingCues, isFormGood } = useVisionAgent();
+  const { isStreaming, isLoading, isSyncing, score, keypoints = [], coachingCues = [], isFormGood } = useVisionAgent();
 
-  const latestCue = coachingCues[coachingCues.length - 1];
+  const latestCue = coachingCues.length > 0 ? coachingCues[coachingCues.length - 1] : null;
 
   // Dynamic Coloring
   // Green for good, Red for bad, Neutral (Warning/Orange or Green) if null
@@ -25,7 +25,7 @@ export default function VideoFeed() {
       ? "hsl(0, 84%, 60%)"
       : "hsl(38, 92%, 55%)"; // Orange/Yellow default
 
-  const kpMap = Object.fromEntries(keypoints.map((kp) => [kp.name, kp]));
+  const kpMap = Object.fromEntries(keypoints?.map((kp) => [kp?.name, kp]) || []);
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 h-full w-full">
@@ -57,13 +57,13 @@ export default function VideoFeed() {
         })}
 
         {/* Draw keypoints */}
-        {keypoints.map((kp, idx) => {
-          const fill = kp.confidence > 0.8 ? strokeColor : "hsl(38, 92%, 55%)";
+        {keypoints?.map((kp, idx) => {
+          const fill = kp?.confidence > 0.8 ? strokeColor : "hsl(38, 92%, 55%)";
           return (
             <circle
               key={`kp-${idx}`}
-              cx={kp.x}
-              cy={kp.y}
+              cx={kp?.x}
+              cy={kp?.y}
               r={0.008}
               fill={fill}
               stroke="hsl(220, 40%, 8%)"
