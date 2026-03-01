@@ -8,12 +8,13 @@ An AI-powered, real-time badminton coaching platform that uses **computer vision
 
 ## 📸 Screenshots
 
-<!-- Add your screenshots here -->
+<img width="1919" height="913" alt="image" src="https://github.com/user-attachments/assets/1467a0a6-867a-4e68-b006-5df95852281e" />
 <!-- ![Dashboard](screenshots/dashboard.png) -->
+<img width="1919" height="967" alt="image" src="https://github.com/user-attachments/assets/4b05cea4-f568-427c-9eee-a95e2cfc6506" />
 <!-- ![Pose Estimation](screenshots/pose-estimation.png) -->
+<img width="1919" height="1021" alt="image" src="https://github.com/user-attachments/assets/eed1676e-4ed0-4e76-a28a-7d90040af165" />
 <!-- ![AI Chat](screenshots/ai-chat.png) -->
 
-> **TODO:** Add screenshots of the dashboard, pose overlay, and AI chat panel here.
 
 ---
 
@@ -180,7 +181,7 @@ badminton-coach/
 
 ## 📝 License
 
-This project is built for the Stream x Google AI Hackathon.
+This project is Built for the Vision Possible: Agent Protocol hackathon..
 
 ---
 
