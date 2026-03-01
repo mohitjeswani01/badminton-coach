@@ -7,7 +7,7 @@ if sys.platform == "win32":
 import json
 import logging
 import os
-import torch
+
 import math
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -69,9 +69,13 @@ except Exception as e:
 
 app = FastAPI()
 
+# CORS: Use CORS_ORIGINS env var in production (comma-separated), fallback to * for local dev
+_cors_origins = os.getenv("CORS_ORIGINS", "*")
+cors_origins = [o.strip() for o in _cors_origins.split(",")] if _cors_origins != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -405,3 +409,9 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, workers=1)
